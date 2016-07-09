@@ -1,0 +1,12 @@
+[package]
+name = "brwm"
+version = "0.1.0"
+authors = ["Jean Pierre Dudey <jeandudey@hotmail.com>"]
+
+[dependencies]
+lazy_static = "0.1"
+libc = "0.2"
+
+[dependencies.x11]
+version = "2.6.1"
+features = ["xlib"]
