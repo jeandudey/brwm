@@ -11,5 +11,4 @@ fern = "0.3"
 time = "0.1"
 
 [dependencies.xcb]
-version = "0.7"
-features = ["xlib"]
+git = "https://github.com/jeandudey/rust-xcb"
