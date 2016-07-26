@@ -10,6 +10,6 @@ log = "0.3"
 fern = "0.3"
 time = "0.1"
 
-[dependencies.x11]
-version = "2.6.1"
+[dependencies.xcb]
+version = "0.7"
 features = ["xlib"]
