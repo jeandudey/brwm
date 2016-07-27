@@ -1,4 +1,5 @@
 use super::xcb;
+use super::error::WMError;
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -19,18 +20,13 @@ impl<'a> WindowManager<'a> {
         }
     }
 
-    pub fn run(&mut self) {
-        let event_mask =
-            [(xcb::CW_EVENT_MASK, xcb::EVENT_MASK_SUBSTRUCTURE_NOTIFY |
-                                  xcb::EVENT_MASK_SUBSTRUCTURE_REDIRECT)];
-        let change_cookie = 
-            xcb::change_window_attributes_checked(&self.conn,
-                                                  self.screen.root(),
-                                                  &event_mask);
-        
-        if change_cookie.request_check().is_err() {
-            panic!("Oh no!");
-        }
+    pub fn run(&mut self) -> Result<(), WMError> { 
+        match self.select_window_wm_events(self.screen.root()) {
+            Ok(_) => (),
+            Err(e) => {
+                return Err(WMError::GenericError(e))
+            }
+        };
 
         let query_tree_cookie = xcb::query_tree(&self.conn, self.screen.root());
         let query_tree_reply = query_tree_cookie.get_reply().unwrap();
@@ -76,9 +72,20 @@ impl<'a> WindowManager<'a> {
                     _ => continue,
                 }
             } else {
-                return;
+                return Ok(());
             }
         }
+    }
+    
+    fn select_window_wm_events(&self, window: xcb::Window) -> Result<(),
+                                                                     xcb::GenericError> {
+        let event_mask =
+            [(xcb::CW_EVENT_MASK, xcb::EVENT_MASK_SUBSTRUCTURE_NOTIFY |
+                                  xcb::EVENT_MASK_SUBSTRUCTURE_REDIRECT)];
+
+        xcb::change_window_attributes_checked(&self.conn,
+                                              window,
+                                              &event_mask).request_check()
     }
 
     fn frame(&mut self, window: xcb::Window, window_geometry: xcb::GetGeometryReply) {

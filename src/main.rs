@@ -9,8 +9,11 @@ extern crate log;
 extern crate fern;
 extern crate time;
 
+mod error;
+
 mod window_manager;
 use window_manager::WindowManager;
+
 
 use std::rc::Rc;
 
@@ -46,5 +49,14 @@ fn main() {
     let mut wm = WindowManager::new(&conn.0, &preferred_screen);
 
     info!("Running WindowManager.");
-    wm.run();
+    match wm.run() {
+        Ok(_) => {
+            info!("No more events to handle, exiting...");
+            return;
+        },
+        Err(e) => {
+            error!("Some error occurred when running window manager: {:?}", e);
+            return;
+        }
+    };
 }
