@@ -1,4 +1,4 @@
-extern crate x11;
+extern crate xcb;
 extern crate libc;
 
 #[macro_use]
@@ -9,13 +9,10 @@ extern crate log;
 extern crate fern;
 extern crate time;
 
-mod screen;
-mod display;
-
 mod window_manager;
 use window_manager::WindowManager;
 
-use std::error::Error;
+use std::rc::Rc;
 
 fn main() {
     let logger_config = fern::DispatchConfig {
@@ -26,29 +23,28 @@ fn main() {
         level: log::LogLevelFilter::Trace,
     };
 
-    if let Err(e) = fern::init_global_logger(logger_config, log::LogLevelFilter::Trace) {
+    if let Err(e) = fern::init_global_logger(logger_config,
+                                             log::LogLevelFilter::Trace) {
         println!("Failed to initialize global logger: {}", e);
         return;
     }
 
-    info!("Creating WindowManager.");
-    let mut wm = match WindowManager::new() {
-        Some(wm) => wm,
-        None => {
-            error!("Cannot create WindowManager");
-            return;
-        }
-    };
-
-    info!("Running WindowManager.");
-    match wm.run() {
-        Ok(_) => {
-            info!("Exiting...");
+    info!("Connecting to X Server.");
+    let conn = match xcb::Connection::connect(None) {
+        Ok((conn, screen_num)) => (Rc::new(conn), screen_num as usize),
+        Err(_) => {
+            error!("Cannot connect to X Server");
             return;
         },
-        Err(e) => {
-            error!("Error: {}", e.description());
-            return;
-        }
-    }
+    };
+
+    info!("Getting preferred screen.");
+    let setup = conn.0.get_setup();
+    let preferred_screen = Rc::new(setup.roots().nth(conn.1).unwrap());
+
+    info!("Creating WindowManager.");
+    let mut wm = WindowManager::new(&conn.0, &preferred_screen);
+
+    info!("Running WindowManager.");
+    wm.run();
 }

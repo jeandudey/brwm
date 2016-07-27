@@ -1,264 +1,174 @@
-use super::x11::xlib;
-use super::libc::{c_int, c_uint};
-use super::display::Display;
+use super::xcb;
 
-use std::sync::Mutex;
-use std::error;
-use std::fmt;
 use std::collections::HashMap;
-use std::mem::zeroed;
+use std::rc::Rc;
 
-lazy_static! {
-    static ref WM_DETECTED: Mutex<bool> = Mutex::new(false);
+pub struct WindowManager<'a> {
+    conn: Rc<xcb::Connection>,
+    clients: HashMap<xcb::Window, xcb::Window>,
+    screen: Rc<xcb::Screen<'a>>
 }
 
-#[derive(Debug)]
-pub struct WindowManager {
-    /// X Server display
-    display: Display,
-    root: xlib::Window,
-    clients: HashMap<xlib::Window, xlib::Window>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum WMError {
-    /// Returned when another WM is running.
-    AnotherWM,
-}
-
-impl fmt::Display for WMError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        match *self {
-            WMError::AnotherWM => write!(f, "Another Window Manager is running"),
-        }
-    }
-}
-
-impl error::Error for WMError {
-    fn description(&self) -> &str {
-        match *self {
-            WMError::AnotherWM => "Another Window Manager is running",
-        }
-    }
-}
-
-const BORDER_WIDTH: u32 = 3;
-const BORDER_COLOR: u32 = 0xff0000;
-const BG_COLOR: u32 = 0x0000ff;
-
-
-impl WindowManager {
-    /// Creates an empty WindowManager structure.
-    pub fn new() -> Option<Self>{
-        if let Some(display) = Display::open_display(None) {
-            let res = WindowManager {
-                display: display,
-                root: 0,
-                clients: HashMap::new(),
-            };
-
-            return Some(res);
-        } else {
-            return None;
+impl<'a> WindowManager<'a> {
+    pub fn new(conn: &Rc<xcb::Connection>,
+               preferred_screen: &Rc<xcb::Screen<'a>>) -> WindowManager<'a> {
+        WindowManager {
+            conn: conn.clone(),
+            clients: HashMap::new(),
+            screen: preferred_screen.clone(),
         }
     }
 
-    pub fn run(&mut self) -> Result<(), WMError> {
-        let screen = self.display.default_screen_of_display();
-        self.root = screen.root_window_of_screen();
-
-        unsafe { xlib::XSetErrorHandler(Some(on_wm_detected)) };
-
-        self.display.select_input(self.root,
-                                  xlib::SubstructureRedirectMask |
-                                  xlib::SubstructureNotifyMask);
-
-        self.display.sync(false);
-
-        if *WM_DETECTED.lock().unwrap() {
-            return Err(WMError::AnotherWM);
+    pub fn run(&mut self) {
+        let event_mask =
+            [(xcb::CW_EVENT_MASK, xcb::EVENT_MASK_SUBSTRUCTURE_NOTIFY |
+                                  xcb::EVENT_MASK_SUBSTRUCTURE_REDIRECT)];
+        let change_cookie = 
+            xcb::change_window_attributes_checked(&self.conn,
+                                                  self.screen.root(),
+                                                  &event_mask);
+        
+        if change_cookie.request_check().is_err() {
+            panic!("Oh no!");
         }
 
-        unsafe {
-            xlib::XSetErrorHandler(Some(on_x_error));
+        let query_tree_cookie = xcb::query_tree(&self.conn, self.screen.root());
+        let query_tree_reply = query_tree_cookie.get_reply().unwrap();
+        
+        let mut geometry_cookies: HashMap<xcb::Window, xcb::GetGeometryCookie> =
+            HashMap::new();
+
+        geometry_cookies.reserve(query_tree_reply.children_len() as usize);
+
+        for child in query_tree_reply.children() {
+            let cookie = xcb::get_geometry(&self.conn, *child);
+            geometry_cookies.insert(*child, cookie);
         }
 
-        self.display.grab_server();
-
-        let query_result = self.display.query_tree(self.root);
-
-        if let Some(children) = query_result.2 {
-            for child in children {
-                self.frame(child);
+        for child in query_tree_reply.children() {
+            if let Some(cookie) = geometry_cookies.get(child) {
+                if let Ok(reply) = cookie.get_reply() {
+                    self.frame(*child, reply);
+                }
+            } else {
+                unreachable!();
             }
         }
-
-        self.display.ungrab_server();
 
         loop {
-            let e = self.display.next_event();
-
-            match e.get_type() {
-                xlib::CreateNotify => {
-                    let xcreatewindow = xlib::XCreateWindowEvent::from(e);
-                    self.on_create_notify(&xcreatewindow);
-                },
-                xlib::DestroyNotify => {
-                    let xdestroywindow = xlib::XDestroyWindowEvent::from(e);
-                    self.on_destroy_notify(&xdestroywindow);
-                },
-                xlib::ReparentNotify => {
-                    let xreparent = xlib::XReparentEvent::from(e);
-                    self.on_reparent_notify(&xreparent);
-                },
-                xlib::MapNotify => {
-                    let xmap = xlib::XMapEvent::from(e);
-                    self.on_map_notify(&xmap);
-                },
-                xlib::UnmapNotify => {
-                    let xunmap = xlib::XUnmapEvent::from(e);
-                    self.on_unmap_notify(&xunmap);
-                },
-                xlib::ConfigureNotify => {
-                    let xconfigure = xlib::XConfigureEvent::from(e);
-                    self.on_configure_notify(&xconfigure);
-                },
-                xlib::MapRequest => {
-                    let xmaprequest = xlib::XMapRequestEvent::from(e);
-                    self.on_map_request(&xmaprequest);
-                },
-                xlib::ConfigureRequest => {
-                    let xconfigurerequest = xlib::XConfigureRequestEvent::from(e);
-                    self.on_configure_request(&xconfigurerequest);
-                },
-                _ => continue,
+            if let Some(e) = self.conn.wait_for_event() {
+                match e.response_type() as u8 {
+                    xcb::MAP_REQUEST => {
+                        let map_request: &xcb::MapRequestEvent =
+                            xcb::cast_event(&e);
+                        self.on_map_request(map_request);
+                    },
+                    xcb::UNMAP_NOTIFY => {
+                        let unmap_event: &xcb::UnmapNotifyEvent =
+                            xcb::cast_event(&e);
+                        self.on_unmap_notify(unmap_event);
+                    },
+                    xcb::CONFIGURE_REQUEST => {
+                        let configure_request: &xcb::ConfigureRequestEvent =
+                            xcb::cast_event(&e);
+                        self.on_configure_request(configure_request);
+                    },
+                    _ => continue,
+                }
+            } else {
+                return;
             }
         }
-
-        Ok(())
     }
 
-    fn frame(&mut self, window: xlib::Window) {
+    fn frame(&mut self, window: xcb::Window, window_geometry: xcb::GetGeometryReply) {
         assert!(!self.clients.contains_key(&window));
 
-        let window_attrs = self.display.get_window_attributes(window);
-        
-        let frame = self.display.create_simple_window(self.root,
-                                                      window_attrs.x,
-                                                      window_attrs.y,
-                                                      window_attrs.width as c_uint,
-                                                      window_attrs.height as c_uint,
-                                                      BORDER_WIDTH,
-                                                      BORDER_COLOR,
-                                                      BG_COLOR);
-        self.display.select_input(frame,
-                                  xlib::SubstructureRedirectMask |
-                                  xlib::SubstructureNotifyMask);
+        let frame = self.conn.generate_id();
 
-        self.display.add_to_save_set(window);
+        xcb::create_window(&self.conn,
+                           xcb::ffi::base::XCB_COPY_FROM_PARENT as u8,
+                           frame,
+                           self.screen.root(),
+                           window_geometry.x(),
+                           window_geometry.y(),
+                           window_geometry.width(),
+                           window_geometry.height(),
+                           BORDER_WIDTH,
+                           xcb::WINDOW_CLASS_INPUT_OUTPUT as u16,
+                           self.screen.root_visual(),
+                           &[(0, 0)]);
 
-        self.display.reparent_window(window, frame, 0, 0);
+        let event_mask =
+            [(xcb::CW_EVENT_MASK, xcb::EVENT_MASK_SUBSTRUCTURE_NOTIFY |
+                                  xcb::EVENT_MASK_SUBSTRUCTURE_REDIRECT)];
+        let change_cookie = 
+            xcb::change_window_attributes_checked(&self.conn, frame, &event_mask); 
 
-        self.display.map_window(frame);
-    
+        if change_cookie.request_check().is_err() {
+            panic!("Another WM is running!");
+        }
+
+        xcb::change_save_set(&self.conn,
+                             xcb::xproto::SET_MODE_INSERT as u8,
+                             frame);
+
+        xcb::reparent_window(&self.conn, window, frame, 0, 0);
+
+        xcb::map_window(&self.conn, window);
+ 
         self.clients.insert(window, frame);
-
-        self.display.grab_button(xlib::Button1,
-                                 xlib::Mod1Mask,
-                                  window,
-                                 false,
-                                 (xlib::ButtonPressMask |
-                                 xlib::ButtonReleaseMask |
-                                 xlib::ButtonMotionMask) as u32,
-                                 xlib::GrabModeAsync,
-                                 xlib::GrabModeAsync,
-                                 0,
-                                 0);
-
-        self.display.grab_button(xlib::Button3,
-                                 xlib::Mod1Mask,
-                                 window,
-                                 false,
-                                 (xlib::ButtonPressMask |
-                                 xlib::ButtonReleaseMask |
-                                 xlib::ButtonMotionMask) as u32,
-                                 xlib::GrabModeAsync,
-                                 xlib::GrabModeAsync,
-                                 0,
-                                 0);
     }
 
-    fn unframe(&mut self, window: xlib::Window) {
+    fn unframe(&mut self, window: xcb::Window) {
         if self.clients.contains_key(&window) {
             let frame = self.clients[&window];
 
-            self.display.unmap_window(frame);
-            self.display.reparent_window(window, self.root, 0, 0);
-            self.display.remove_from_save_set(window);
-            self.display.destroy_window(window);
+            xcb::unmap_window(&self.conn, frame);
+            xcb::reparent_window(&self.conn, window, self.screen.root(), 0, 0);
+
+            xcb::change_save_set(&self.conn,
+                                 xcb::xproto::SET_MODE_DELETE as u8,
+                                 frame);
 
             self.clients.remove(&window);
         }
     }
     
-    fn on_create_notify(&self, _: &xlib::XCreateWindowEvent) {
+    fn on_unmap_notify(&mut self, e: &xcb::UnmapNotifyEvent) {
+        self.unframe(e.window());
     }
 
-    fn on_destroy_notify(&self, _: &xlib::XDestroyWindowEvent) {
+    fn on_map_request(&mut self, e: &xcb::MapRequestEvent) {
+        let cookie = xcb::get_geometry(&self.conn, e.window());
+
+        if let Ok(reply) = cookie.get_reply() {
+            self.frame(e.window(), reply);
+            xcb::map_window(&self.conn, e.window());
+        }
     }
 
-    fn on_reparent_notify(&self, _: &xlib::XReparentEvent) {
-    }
+    fn on_configure_request(&self, e: &xcb::ConfigureRequestEvent) {
+        use xcb::ffi::xproto;
 
-    fn on_map_notify(&self, _: &xlib::XMapEvent) {
-    }
+        let values_list: [(u16, u32); 7] = [
+            (xproto::XCB_CONFIG_WINDOW_X as u16, e.x() as u32),
+            (xproto::XCB_CONFIG_WINDOW_Y as u16, e.y() as u32),
+            (xproto::XCB_CONFIG_WINDOW_WIDTH as u16, e.width() as u32),
+            (xproto::XCB_CONFIG_WINDOW_HEIGHT as u16, e.height() as u32),
+            (xproto::XCB_CONFIG_WINDOW_BORDER_WIDTH as u16, e.border_width() as u32),
+            (xproto::XCB_CONFIG_WINDOW_SIBLING as u16, e.sibling() as u32),
+            (xproto::XCB_CONFIG_WINDOW_STACK_MODE as u16, e.stack_mode() as u32)
+        ];
 
-    fn on_unmap_notify(&mut self, e: &xlib::XUnmapEvent) {
-        self.unframe(e.window);
-    }
+        if self.clients.contains_key(&e.window()) {
+            let frame = self.clients[&e.window()]; 
 
-    fn on_configure_notify(&self, _: &xlib::XConfigureEvent) {
-    }
-
-    fn on_map_request(&mut self, e: &xlib::XMapRequestEvent) {
-        self.frame(e.window);
-        self.display.map_window(e.window);
-    }
-
-
-    fn on_configure_request(&self, e: &xlib::XConfigureRequestEvent) {
-        let mut changes: xlib::XWindowChanges = unsafe { zeroed() };
-
-        changes.x = e.x;
-        changes.y = e.y;
-        changes.width = e.width;
-        changes.height = e.height;
-        changes.border_width = e.border_width;
-        changes.sibling = e.above;
-        changes.stack_mode = e.detail;
-
-        if self.clients.contains_key(&e.window) {
-            let frame = self.clients[&e.window]; 
-            self.display.configure_window(frame,
-                                          e.value_mask,
-                                          &mut changes);
+            xcb::configure_window(&self.conn, frame, &values_list);
         }
 
-        self.display.configure_window(e.window,
-                                      e.value_mask,
-                                      &mut changes);
+        xcb::configure_window(&self.conn, e.window(), &values_list);
     }
 }
 
-unsafe extern "C" fn on_x_error(_: *mut xlib::Display,
-                                _: *mut xlib::XErrorEvent) -> c_int {
-    0
-}
-
-
-unsafe extern "C" fn on_wm_detected(_: *mut xlib::Display,
-                                    e: *mut xlib::XErrorEvent) -> c_int {
-    assert!((*e as xlib::XErrorEvent).error_code == xlib::BadAccess);
-    *WM_DETECTED.lock().unwrap() = true;
-    0
-}
+const BORDER_WIDTH: u16 = 3;
