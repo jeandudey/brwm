@@ -23,14 +23,16 @@ use std::rc::Rc;
 fn main() {
     let logger_config = fern::DispatchConfig {
         format: Box::new(|msg: &str, level: &log::LogLevel, _location: &log::LogLocation| {
-            format!("[{}][{}] {}", time::now().strftime("%Y-%m-%d][%H:%M:%S").unwrap(), level, msg)
+            format!("[{}][{}] {}",
+                    time::now().strftime("%Y-%m-%d][%H:%M:%S").unwrap(),
+                    level,
+                    msg)
         }),
         output: vec![fern::OutputConfig::stdout()],
         level: log::LogLevelFilter::Trace,
     };
 
-    if let Err(e) = fern::init_global_logger(logger_config,
-                                             log::LogLevelFilter::Trace) {
+    if let Err(e) = fern::init_global_logger(logger_config, log::LogLevelFilter::Trace) {
         println!("Failed to initialize global logger: {}", e);
         return;
     }
@@ -41,7 +43,7 @@ fn main() {
         Err(_) => {
             error!("Cannot connect to X Server");
             return;
-        },
+        }
     };
 
     info!("Getting preferred screen.");
@@ -59,7 +61,7 @@ fn main() {
         Ok(_) => {
             info!("No more events to handle, exiting...");
             return;
-        },
+        }
         Err(e) => {
             error!("Some error occurred when running window manager: {:?}", e);
             return;

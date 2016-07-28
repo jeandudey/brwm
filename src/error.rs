@@ -2,7 +2,7 @@ use super::xcb;
 
 #[derive(Debug)]
 pub enum WMError {
-    GenericError(xcb::GenericError)
+    GenericError(xcb::GenericError),
 }
 
 impl From<xcb::GenericError> for WMError {

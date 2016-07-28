@@ -4,17 +4,15 @@ use xcb::{InternAtomCookie, Atom};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-static ATOMS_LIST: &'static [&'static str] = &[
-    "WM_STATE",
-    "WM_CHANGE_STATE",
-    "WM_PROTOCOLS",
-    "WM_DELETE_WINDOW",
-    "WM_TAKE_FOCUS",
-    "WM_COLORMAP_WINDOWS",
-    "COMPOUND_TEXT",
-    "_MOZILLA_URL",
-    "_MOTIF_WM_HINTS",
-];
+static ATOMS_LIST: &'static [&'static str] = &["WM_STATE",
+                                               "WM_CHANGE_STATE",
+                                               "WM_PROTOCOLS",
+                                               "WM_DELETE_WINDOW",
+                                               "WM_TAKE_FOCUS",
+                                               "WM_COLORMAP_WINDOWS",
+                                               "COMPOUND_TEXT",
+                                               "_MOZILLA_URL",
+                                               "_MOTIF_WM_HINTS"];
 
 /// Handles ICCCM and EWMH atoms.
 pub struct AtomManager {
@@ -30,8 +28,7 @@ impl AtomManager {
             conn: conn.clone(),
         };
 
-        let mut cookies: Vec<InternAtomCookie> =
-            Vec::with_capacity(ATOMS_LIST.len());
+        let mut cookies: Vec<InternAtomCookie> = Vec::with_capacity(ATOMS_LIST.len());
 
         for atom_name in ATOMS_LIST {
             let cookie = xcb::intern_atom(&*am.conn, false, atom_name);
