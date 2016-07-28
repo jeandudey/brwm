@@ -1,11 +1,7 @@
 # BRWM - Basic Rust Window Manager
-BRWM is a [1][stacking window manager] designed to be blazing fast using modern techonogies like [2][Rust] and [3][XCB].
+BRWM is a [stacking window manager](https://en.wikipedia.org/wiki/Stacking_window_manager) designed to be blazing fast using modern techonogies like [Rust](https://www.rust-lang.org/) and [XCB](https://xcb.freedesktop.org/).
 
 This project is in an early stage of development so there are tons of bugs (or features) to play with. 
-
-[1]: https://en.wikipedia.org/wiki/Stacking_window_manager
-[2]: https://www.rust-lang.org/en-US/
-[3]: https://xcb.freedesktop.org/
 
 ## Usage
 First of all you need to have:
