@@ -1,16 +1,51 @@
+#!/usr/bin/bash
+
 set -e
 
-cargo build
-
-# 2. Run.
-#
-# We need to specify the full path to Xephyr, as otherwise xinit will not
-# interpret it as an argument specifying the X server to launch and will launch
-# the default X server instead.
 XEPHYR=$(whereis -b Xephyr | cut -f2 -d' ')
-xinit ./xinitrc -- \
-    "$XEPHYR" \
-        :100 \
-        -ac \
-        -screen 640x480 \
-        -host-cursor
+
+runXephyrRelease ()
+{
+    xinit ./xinitrc-release -- \
+        "$XEPHYR" \
+            :100 \
+            -ac \
+            -screen 640x480 \
+            -host-cursor
+}
+
+runXephyrDebug ()
+{
+    xinit ./xinitrc-debug -- \
+        "$XEPHYR" \
+            :100 \
+            -ac \
+            -screen 640x480 \
+            -host-cursor
+}
+
+while [[ $# > 0 ]]
+do
+        case "$1" in
+                --release)
+                        echo "Release mode."
+                        cargo build --release
+                        runXephyrRelease
+                        exit 1
+                        ;;
+
+                --help)
+                        echo "USAGE: run.sh [OPTIONS]"
+                        echo " OPTIONS:"
+                        echo "    --release"
+                        echo "    --help"
+                        echo "EXAMPLE: run.sh --release"
+                        exit 1
+                        ;;
+        esac
+        shift
+done
+
+echo "Debug mode"
+cargo build
+runXephyrDebug
