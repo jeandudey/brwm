@@ -21,15 +21,16 @@ impl<'a> WindowManager<'a> {
     }
 
     pub fn run(&mut self) -> Result<(), WMError> { 
-        match self.select_window_wm_events(self.screen.root()) {
-            Ok(_) => (),
-            Err(e) => {
-                return Err(WMError::GenericError(e))
-            }
+        if let Err(e) = self.select_window_wm_events(self.screen.root()) {
+            return Err(WMError::from(e))
         };
+        debug!("WM events selected (wid: 0x{:X})", self.screen.root());
 
         let query_tree_cookie = xcb::query_tree(&self.conn, self.screen.root());
-        let query_tree_reply = query_tree_cookie.get_reply().unwrap();
+        let query_tree_reply = match query_tree_cookie.get_reply() {
+            Ok(r) => r,
+            Err(e) => return Err(WMError::from(e)),
+        };
         
         let mut geometry_cookies: HashMap<xcb::Window, xcb::GetGeometryCookie> =
             HashMap::new();
@@ -44,7 +45,9 @@ impl<'a> WindowManager<'a> {
         for child in query_tree_reply.children() {
             if let Some(cookie) = geometry_cookies.get(child) {
                 if let Ok(reply) = cookie.get_reply() {
-                    self.frame(*child, reply);
+                    if let Err(e) = self.frame(*child, reply) {
+                        return Err(WMError::from(e));
+                    }
                 }
             } else {
                 unreachable!();
@@ -57,17 +60,24 @@ impl<'a> WindowManager<'a> {
                     xcb::MAP_REQUEST => {
                         let map_request: &xcb::MapRequestEvent =
                             xcb::cast_event(&e);
-                        self.on_map_request(map_request);
+                        if let Err(e) = self.on_map_request(map_request) {
+                            return Err(WMError::from(e));
+                        }
                     },
                     xcb::UNMAP_NOTIFY => {
                         let unmap_event: &xcb::UnmapNotifyEvent =
                             xcb::cast_event(&e);
-                        self.on_unmap_notify(unmap_event);
+                        if let Err(e) = self.on_unmap_notify(unmap_event) {
+                            return Err(WMError::from(e));
+                        }
                     },
                     xcb::CONFIGURE_REQUEST => {
                         let configure_request: &xcb::ConfigureRequestEvent =
                             xcb::cast_event(&e);
-                        self.on_configure_request(configure_request);
+
+                        if let Err(e) = self.on_configure_request(configure_request) {
+                            return Err(WMError::from(e));
+                        }
                     },
                     _ => continue,
                 }
@@ -77,8 +87,9 @@ impl<'a> WindowManager<'a> {
         }
     }
     
-    fn select_window_wm_events(&self, window: xcb::Window) -> Result<(),
-                                                                     xcb::GenericError> {
+    fn select_window_wm_events(&self,
+                               window: xcb::Window) -> Result<(),
+                                                              xcb::GenericError> {
         let event_mask =
             [(xcb::CW_EVENT_MASK, xcb::EVENT_MASK_SUBSTRUCTURE_NOTIFY |
                                   xcb::EVENT_MASK_SUBSTRUCTURE_REDIRECT)];
@@ -88,74 +99,110 @@ impl<'a> WindowManager<'a> {
                                               &event_mask).request_check()
     }
 
-    fn frame(&mut self, window: xcb::Window, window_geometry: xcb::GetGeometryReply) {
+    fn frame(&mut self, window: xcb::Window,
+             window_geometry: xcb::GetGeometryReply) -> Result<(),
+                                                               xcb::GenericError> {
+        info!("Creating frame for window (wid: 0x{:X}).", window);
+
         assert!(!self.clients.contains_key(&window));
 
         let frame = self.conn.generate_id();
+        debug!("Window ID generated: 0x{:X}.", frame);
 
-        xcb::create_window(&self.conn,
-                           xcb::ffi::base::XCB_COPY_FROM_PARENT as u8,
-                           frame,
-                           self.screen.root(),
-                           window_geometry.x(),
-                           window_geometry.y(),
-                           window_geometry.width(),
-                           window_geometry.height(),
-                           BORDER_WIDTH,
-                           xcb::WINDOW_CLASS_INPUT_OUTPUT as u16,
-                           self.screen.root_visual(),
-                           &[(0, 0)]);
+        try!(xcb::create_window_checked(&self.conn,
+                                        xcb::ffi::base::XCB_COPY_FROM_PARENT as u8,
+                                        frame,
+                                        self.screen.root(),
+                                        window_geometry.x(),
+                                        window_geometry.y(),
+                                        window_geometry.width(),
+                                        window_geometry.height(),
+                                        BORDER_WIDTH,
+                                        xcb::WINDOW_CLASS_INPUT_OUTPUT as u16,
+                                        self.screen.root_visual(),
+                                        &[(0, 0)]).request_check());
 
-        let event_mask =
-            [(xcb::CW_EVENT_MASK, xcb::EVENT_MASK_SUBSTRUCTURE_NOTIFY |
-                                  xcb::EVENT_MASK_SUBSTRUCTURE_REDIRECT)];
-        let change_cookie = 
-            xcb::change_window_attributes_checked(&self.conn, frame, &event_mask); 
+        debug!("Window created (wid: 0x{:X})", frame);
 
-        if change_cookie.request_check().is_err() {
-            panic!("Another WM is running!");
-        }
+        try!(self.select_window_wm_events(frame));
+        debug!("WM events selected (wid: 0x{:X}).", frame);
 
-        xcb::change_save_set(&self.conn,
-                             xcb::xproto::SET_MODE_INSERT as u8,
-                             frame);
+        try!(xcb::change_save_set_checked(&self.conn,
+                                          xcb::xproto::SET_MODE_INSERT as u8,
+                                          window).request_check());
+        debug!("Save set changed for (wid: 0x{:X}, mode: {})",
+               frame,
+               stringify!(xcb::xproto::SET_MODE_INSERT));
 
-        xcb::reparent_window(&self.conn, window, frame, 0, 0);
+        try!(xcb::reparent_window_checked(&self.conn, window, frame, 0, 0).request_check());
+        debug!("Window reparented (window: 0x{:X}, parent: 0x{:X})", window, frame);
 
-        xcb::map_window(&self.conn, window);
+        try!(xcb::map_window_checked(&self.conn, frame).request_check());
+        debug!("Window mapped (wid: 0x{:X})", frame);
  
         self.clients.insert(window, frame);
+
+        return Ok(());
     }
 
-    fn unframe(&mut self, window: xcb::Window) {
+    fn unframe(&mut self, window: xcb::Window) -> Result<(), xcb::GenericError> {
         if self.clients.contains_key(&window) {
             let frame = self.clients[&window];
 
-            xcb::unmap_window(&self.conn, frame);
-            xcb::reparent_window(&self.conn, window, self.screen.root(), 0, 0);
+            try!(xcb::unmap_window_checked(&self.conn, frame).request_check());
+            debug!("Window unmapped (wid: 0x{:X}).", frame);
 
-            xcb::change_save_set(&self.conn,
-                                 xcb::xproto::SET_MODE_DELETE as u8,
-                                 frame);
+            try!(xcb::reparent_window_checked(&self.conn,
+                                              window,
+                                              self.screen.root(),
+                                              0,
+                                              0).request_check());
+            debug!("Window reparented (wid: 0x{:X}, parent: 0x{:X}).",
+                   window,
+                   self.screen.root());
+
+            try!(xcb::change_save_set_checked(&self.conn,
+                                              xcb::xproto::SET_MODE_DELETE as u8,
+                                              window).request_check());
+            debug!("Save set changed (wid: 0x{:X}, mode: {}).",
+                   window,
+                   stringify!(xcb::xproto::SET_MODE_DELETE));
 
             self.clients.remove(&window);
         }
+        
+        Ok(())
     }
     
-    fn on_unmap_notify(&mut self, e: &xcb::UnmapNotifyEvent) {
-        self.unframe(e.window());
+    fn on_unmap_notify(&mut self,
+                       e: &xcb::UnmapNotifyEvent) -> Result<(),
+                                                            xcb::GenericError> {
+        debug!("UnmapNotifyEvent received.");
+        try!(self.unframe(e.window()));
+        debug!("Window unframed (wid: 0x{:X})", e.window());
+        
+        Ok(())
     }
 
-    fn on_map_request(&mut self, e: &xcb::MapRequestEvent) {
+    fn on_map_request(&mut self,
+                      e: &xcb::MapRequestEvent) -> Result<(),
+                                                          xcb::GenericError> {
+        debug!("MapRequestEvent received.");
         let cookie = xcb::get_geometry(&self.conn, e.window());
+        let reply = try!(cookie.get_reply());
 
-        if let Ok(reply) = cookie.get_reply() {
-            self.frame(e.window(), reply);
-            xcb::map_window(&self.conn, e.window());
-        }
+        try!(self.frame(e.window(), reply));
+        debug!("Window framed (wid: 0x{:X}).", e.window());
+
+        try!(xcb::map_window(&self.conn, e.window()).request_check());
+        debug!("Window mapped (wid: 0x{:X})", e.window());
+
+        Ok(())
     }
 
-    fn on_configure_request(&self, e: &xcb::ConfigureRequestEvent) {
+    fn on_configure_request(&self,
+                            e: &xcb::ConfigureRequestEvent) -> Result<(),
+                                                                      xcb::GenericError> {
         use xcb::ffi::xproto;
 
         let values_list: [(u16, u32); 7] = [
@@ -171,10 +218,18 @@ impl<'a> WindowManager<'a> {
         if self.clients.contains_key(&e.window()) {
             let frame = self.clients[&e.window()]; 
 
-            xcb::configure_window(&self.conn, frame, &values_list);
+            try!(xcb::configure_window_checked(&self.conn,
+                                               frame,
+                                               &values_list).request_check());
+            debug!("Window configured (wid: 0x{:X})", frame);
         }
 
-        xcb::configure_window(&self.conn, e.window(), &values_list);
+        try!(xcb::configure_window_checked(&self.conn,
+                                           e.window(),
+                                           &values_list).request_check());
+        debug!("Window configured (wid: 0x{:X})", e.window());
+
+        Ok(())
     }
 }
 
