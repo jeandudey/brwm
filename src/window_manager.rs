@@ -193,16 +193,14 @@ impl<'a> WindowManager<'a> {
     fn on_configure_request(&self,
                             e: &xcb::ConfigureRequestEvent)
                             -> Result<(), xcb::GenericError> {
-        use xcb::ffi::xproto;
-
         let values_list: [(u16, u32); 7] =
-            [(xproto::XCB_CONFIG_WINDOW_X as u16, e.x() as u32),
-             (xproto::XCB_CONFIG_WINDOW_Y as u16, e.y() as u32),
-             (xproto::XCB_CONFIG_WINDOW_WIDTH as u16, e.width() as u32),
-             (xproto::XCB_CONFIG_WINDOW_HEIGHT as u16, e.height() as u32),
-             (xproto::XCB_CONFIG_WINDOW_BORDER_WIDTH as u16, e.border_width() as u32),
-             (xproto::XCB_CONFIG_WINDOW_SIBLING as u16, e.sibling() as u32),
-             (xproto::XCB_CONFIG_WINDOW_STACK_MODE as u16, e.stack_mode() as u32)];
+            [(xcb::CONFIG_WINDOW_X as u16, e.x() as u32),
+             (xcb::CONFIG_WINDOW_Y as u16, e.y() as u32),
+             (xcb::CONFIG_WINDOW_WIDTH as u16, e.width() as u32),
+             (xcb::CONFIG_WINDOW_HEIGHT as u16, e.height() as u32),
+             (xcb::CONFIG_WINDOW_BORDER_WIDTH as u16, e.border_width() as u32),
+             (xcb::CONFIG_WINDOW_SIBLING as u16, e.sibling() as u32),
+             (xcb::CONFIG_WINDOW_STACK_MODE as u16, e.stack_mode() as u32)];
 
         if self.clients.contains_key(&e.window()) {
             let frame = self.clients[&e.window()];
