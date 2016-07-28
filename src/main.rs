@@ -11,6 +11,9 @@ extern crate time;
 
 mod error;
 
+mod atom_manager;
+use atom_manager::AtomManager;
+
 mod window_manager;
 use window_manager::WindowManager;
 
@@ -44,6 +47,9 @@ fn main() {
     info!("Getting preferred screen.");
     let setup = conn.0.get_setup();
     let preferred_screen = Rc::new(setup.roots().nth(conn.1).unwrap());
+
+    info!("Initializing AtomManager.");
+    let atom_manager = AtomManager::new(&conn.0);
 
     info!("Creating WindowManager.");
     let mut wm = WindowManager::new(&conn.0, &preferred_screen);
