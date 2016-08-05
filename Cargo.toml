@@ -12,3 +12,6 @@ time = "0.1"
 
 [dependencies.xcb]
 git = "https://github.com/jeandudey/rust-xcb"
+
+[dependencies.xcb-image]
+git = "https://github.com/jeandudey/xcb-image-rs"
