@@ -1,5 +1,6 @@
 extern crate xcb;
 extern crate xcb_image;
+extern crate xcb_cursor;
 extern crate libc;
 
 #[macro_use]
@@ -15,14 +16,14 @@ mod error;
 mod atom_manager;
 use atom_manager::AtomManager;
 
-mod cursor;
-use cursor::CursorManager;
+mod cursor_manager;
+use cursor_manager::CursorManager;
 
 mod window_manager;
 use window_manager::WindowManager;
 
-
 use std::rc::Rc;
+use xcb_cursor::CursorContext;
 
 fn main() {
     let logger_config = fern::DispatchConfig {
@@ -60,17 +61,22 @@ fn main() {
     info!("Initializing AtomManager.");
     let atom_manager = AtomManager::new(&conn.0);
 
-    let default_colormap = preferred_screen.default_colormap();
-
-    info!("Initializing CursorManager.");
-    let cursor_manager = CursorManager::new(&conn.0, root_window, default_colormap);
+    info!("Creating CursorManager.");
+    let cursor_manager = match CursorManager::new(&conn.0, &preferred_screen) {
+        Some(cm) => cm,
+        None => {
+            error!("Could not create CursorManager");
+            return;
+        },
+    };
 
     info!("Setting cursor for root window");
     let cookie = xcb::change_window_attributes(&conn.0, root_window, &[(xcb::CW_CURSOR as u32, cursor_manager.arrow)]);
+
     if let Err(e) = cookie.request_check() {
         error!("Cannot change root window cursor:\n
-               root_window: 0x{:X};\n
-               cursor_manager.arrow: 0x{:X}\n
+               root_window: {:#X};\n
+               cursor_manager.arrow: {:#X}\n
                e.response_type(): {}", root_window, cursor_manager.arrow, e.response_type());
         return;
     }
